@@ -1,0 +1,143 @@
+name: CI
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_debug:
+    name: Build and Test (Debug/Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: 'one_collect: Build'
+      working-directory: one_collect
+      run: cargo build --verbose
+    - name: 'one_collect: Run tests'
+      working-directory: one_collect
+      run: cargo test --verbose
+    - name: 'ruwind: Build'
+      working-directory: ruwind
+      run: cargo build --verbose
+    - name: 'ruwind: Run tests'
+      working-directory: ruwind
+      run: cargo test --verbose
+    - name: 'record-trace: Build'
+      working-directory: record-trace/ffi
+      run: cargo build --verbose
+    - name: 'record-trace: Run tests'
+      working-directory: record-trace/ffi
+      run: cargo test --verbose
+
+  build_win_debug:
+    name: Build and Test (Debug/Windows)
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: 'one_collect: Build'
+      working-directory: one_collect
+      run: cargo build --verbose
+    - name: 'one_collect: Run tests'
+      working-directory: one_collect
+      run: cargo test --verbose
+    - name: 'ruwind: Build'
+      working-directory: ruwind
+      run: cargo build --verbose
+    - name: 'ruwind: Run tests'
+      working-directory: ruwind
+      run: cargo test --verbose
+    - name: 'record-trace: Build'
+      working-directory: record-trace/ffi
+      run: cargo build --verbose
+    - name: 'record-trace: Run tests'
+      working-directory: record-trace/ffi
+      run: cargo test --verbose
+
+  build_release:
+    name: Build and Test (Release/Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: 'one_collect: Build'
+      working-directory: one_collect
+      run: cargo build --release --verbose
+    - name: 'one_collect: Run tests'
+      working-directory: one_collect
+      run: cargo test --release --verbose
+    - name: 'ruwind: Build'
+      working-directory: ruwind
+      run: cargo build --release --verbose
+    - name: 'ruwind: Run tests'
+      working-directory: ruwind
+      run: cargo test --release --verbose
+    - name: 'record-trace: Build'
+      working-directory: record-trace/ffi
+      run: cargo build --release --verbose
+    - name: 'record-trace: Run tests'
+      working-directory: record-trace/ffi
+      run: cargo test --release --verbose
+
+  build_win_release:
+    name: Build and Test (Release/Windows)
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: 'one_collect: Build'
+      working-directory: one_collect
+      run: cargo build --release --verbose
+    - name: 'one_collect: Run tests'
+      working-directory: one_collect
+      run: cargo test --release --verbose
+    - name: 'ruwind: Build'
+      working-directory: ruwind
+      run: cargo build --release --verbose
+    - name: 'ruwind: Run tests'
+      working-directory: ruwind
+      run: cargo test --release --verbose
+    - name: 'record-trace: Build'
+      working-directory: record-trace/ffi
+      run: cargo build --release --verbose
+    - name: 'record-trace: Run tests'
+      working-directory: record-trace/ffi
+      run: cargo test --release --verbose
+
+  bench:
+    name: Run Benchmarks (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run benchmarks
+      working-directory: one_collect
+      run: cargo bench --verbose
+
+  bench_win:
+    name: Run Benchmarks (Windows)
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run benchmarks
+      working-directory: one_collect
+      run: cargo bench --verbose
+
+  docker_console:
+    name: Run Docker Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run Docker tests
+      working-directory: test/docker/perf_export
+      run: ./run.sh

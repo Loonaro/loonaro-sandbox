@@ -1,0 +1,12 @@
+[package]
+name = "ruwind"
+description = "Unwind support crate for one_collect."
+version = "0.0.0-dev"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/microsoft/one-collect"
+
+[dependencies]
+cpp_demangle = "0.4.3"
+rustc-demangle = "0.1"
+libc = "0.2"

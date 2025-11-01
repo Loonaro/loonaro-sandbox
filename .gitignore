@@ -1,0 +1,14 @@
+# Rust-specific ignores
+target/
+
+# IDE-specific ignores (adjust as needed for your IDE)
+.idea/
+.vscode/
+
+# Operating system specific ignores
+.DS_Store
+Thumbs.db
+
+# Other common ignores
+*.swp
+*~

@@ -1,0 +1,12 @@
+[package]
+name = "engine"
+description = "Engine to record a machine-level trace using the one-collect crate."
+version = "0.0.0-dev"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/microsoft/one-collect"
+
+[dependencies]
+anyhow = "1.0.75"
+clap = { version = "4.5.26", features = ["cargo", "derive"] }
+one_collect = { path = "../../one_collect" }
