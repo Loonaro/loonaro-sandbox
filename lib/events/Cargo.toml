@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-minicbor = "2.1.1"
-serde = { version = "1.0.228", features = ["derive"] }
+minicbor = { version = "2.1.1", features = ["derive", "std"] }
+one_collect = {path = "../../one-collect/one_collect"}
