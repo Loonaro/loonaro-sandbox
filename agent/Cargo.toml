@@ -7,4 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 clap = { version = "4.5.51", features = ["derive"] }
 one_collect = { path = "../one-collect/one_collect" }
-events = { path = "../lib/events" }
+etw = { path = "../lib/etw" }
+comms = { path = "../lib/comms" }
+tokio = { version = "1.48.0", features = ["net", "rt", "rt-multi-thread", "macros", "sync"] }
+minicbor = "2.1.1"

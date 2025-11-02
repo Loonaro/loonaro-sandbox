@@ -1,7 +1,9 @@
 [package]
-name = "transport"
+name = "comms"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 tokio = { version = "1.48.0", features = ["net"] }
+minicbor = { version = "2.1.1", features = ["derive"] }
+etw = { path = "../etw" }

@@ -19,8 +19,8 @@ impl UdpTransport {
 impl Transport for UdpTransport {
     async fn send(&mut self, data: &[u8]) -> io::Result<()> {
         let size = data.len();
-        let bytes_sent = 0;
-        loop {
+        let mut bytes_sent = 0;
+        while bytes_sent < size {
             self.socket.writable().await?;
             let n = match self.socket.send(data).await {
                 Ok(n) => n,
@@ -32,10 +32,8 @@ impl Transport for UdpTransport {
                     return Err(e);
                 }
             };
-
-            if n + bytes_sent == size {
-                break;
-            }
+            
+            bytes_sent += n;
         }
 
         Ok(())

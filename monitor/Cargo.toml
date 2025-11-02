@@ -1,0 +1,14 @@
+[package]
+name = "monitor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = "2.0.17"
+comms = { path = "../lib/comms" }
+tokio = { version = "1.48.0", features = ["rt", "rt-multi-thread", "macros"] }
+minicbor = "2.1.1"
+etw = { path = "../lib/etw" }
+anyhow = "1.0.99"
+comfy-table = { version = "7.1.1", features = ["tty"] }
+terminal_size = "0.4.0"

@@ -1,8 +1,9 @@
 [package]
-name = "events"
+name = "etw"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 minicbor = { version = "2.1.1", features = ["derive", "std"] }
 one_collect = {path = "../../one-collect/one_collect"}
+thiserror = "2.0.17"
