@@ -1,6 +1,6 @@
 mod error;
 pub mod payload;
-mod sid;
+pub mod helpers;
 
 use crate::payload::process::ProcessEventPayload;
 use minicbor::{Decode, Encode};

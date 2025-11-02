@@ -1,7 +1,6 @@
 use anyhow::Context;
 use comms::tcp::TcpStreamTransport;
 use comms::{Message, Transport};
-use etw::payload::FieldProvider;
 use etw::{EtwEvent, Event, EventPayload, ProcessEvent};
 use minicbor::{Decode, Decoder};
 use std::net::SocketAddr;
@@ -31,7 +30,7 @@ enum ReadState {
 async fn main() -> anyhow::Result<()> {
     // Connect to the agent on the port used by the agent (see agent/src/main.rs)
     let agent_addr = SocketAddr::from_str("127.0.0.1:1337")?;
-    let mut transport = comms::tcp::TcpStreamTransport::connect(&agent_addr)
+    let mut transport = TcpStreamTransport::connect(&agent_addr)
         .await
         .context("Failed to connect to agent")?;
 
@@ -109,7 +108,6 @@ async fn collect(
     transport: &mut TcpStreamTransport,
     all_events: &mut Vec<Event>,
 ) -> anyhow::Result<()> {
-    let process_fields = etw::payload::process::ProcessPayloadFieldsProvider::new();
 
     // Stream parsing state
     let mut inbox: Vec<u8> = Vec::with_capacity(64 * 1024);
@@ -210,7 +208,7 @@ async fn collect(
                     // Decode the event payload
                     match hdr.event_type() {
                         EtwEvent::SystemProcess(_) => {
-                            let process_event = match process_fields.event_data(&payload) {
+                            let process_event = match etw::payload::process::ProcessEventPayload::parse(&payload) {
                                 Ok(ev) => ev,
                                 Err(e) => {
                                     eprintln!("Failed to parse process event payload: {}", e);
@@ -221,7 +219,7 @@ async fn collect(
                                 }
                             };
 
-                            let event = etw::Event::new(hdr, EventPayload::Process(process_event));
+                            let event = Event::new(hdr, EventPayload::Process(process_event));
                             all_events.push(event);
                         }
                         EtwEvent::Sysmon => {
