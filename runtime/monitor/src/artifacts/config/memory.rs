@@ -61,10 +61,6 @@ impl Default for MemoryCollectionConfig {
 }
 
 impl MemoryCollectionConfig {
-    // aggressive removed
-
-    // minimal removed
-
     pub fn should_dump_process(&self, process_name: &str) -> bool {
         if !self.enabled {
             return false;

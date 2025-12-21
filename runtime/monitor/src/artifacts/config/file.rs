@@ -60,10 +60,6 @@ impl Default for FileCollectionConfig {
 }
 
 impl FileCollectionConfig {
-    // aggressive removed
-
-    // minimal removed
-
     pub fn should_collect(&self, path: &str, size: u64) -> bool {
         if !self.enabled {
             return false;

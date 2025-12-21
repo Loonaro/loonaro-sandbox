@@ -10,7 +10,6 @@ one_collect = { git = "https://github.com/microsoft/one-collect" }
 
 etw = { path = "../lib/etw" }
 comms = { path = "../lib/comms" }
-fakenet = { path = "../fakenet" }
 tokio = { version = "1.48.0", features = ["net", "rt", "rt-multi-thread", "macros", "sync", "io-util", "time"] }
 minicbor = "2.1.1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }

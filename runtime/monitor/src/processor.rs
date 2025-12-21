@@ -5,7 +5,7 @@ use minicbor::{Decode, Decoder};
 use rand::Rng;
 
 use crate::artifacts::ArtifactCollector;
-use crate::telemetry::{self, MalwareEvent};
+use crate::moose::{MalwareEvent, send_lifecycle, send_malware_event};
 
 enum ReadState {
     ExpectHeader,
@@ -16,10 +16,6 @@ enum ReadState {
     ExpectMemoryDumpPayload {
         size: usize,
         header: Option<MemoryDumpHeader>,
-    },
-    ExpectGenericPayload {
-        size: usize,
-        tag: String,
     },
 }
 
@@ -126,19 +122,6 @@ pub async fn collect(
 
                     state = ReadState::ExpectHeader;
                 }
-                ReadState::ExpectGenericPayload { size, tag } => {
-                    if inbox.len() < *size {
-                        break;
-                    }
-                    let _payload: Vec<u8> = inbox.drain(0..*size).collect();
-
-                    if tag == "fakenet" {
-                        println!("Received FakeNet event ({} bytes)", *size);
-                        // Future: Forward to Moose
-                    }
-
-                    state = ReadState::ExpectHeader;
-                }
             }
         }
     }
@@ -160,10 +143,6 @@ async fn handle_message(
             size: payload_size as usize,
             header: Some(header),
         })),
-        Message::FakeNetEvent(len) => Ok(Some(ReadState::ExpectGenericPayload {
-            size: len as usize,
-            tag: "fakenet".to_string(),
-        })),
         Message::TracingFinished(n) => {
             println!(
                 "Tracing finished. Total events received: {}",
@@ -177,7 +156,7 @@ async fn handle_message(
                 );
             }
 
-            telemetry::send_lifecycle(
+            send_lifecycle(
                 moose_url,
                 moose_key,
                 session_id,
@@ -304,7 +283,7 @@ async fn handle_process_event(
         severity,
     );
 
-    telemetry::send_telemetry(moose_url, moose_key, &malware_event).await;
+    send_malware_event(moose_url, moose_key, &malware_event).await;
 
     let event = Event::new(hdr, EventPayload::Process(process_event));
     all_events.push(event);
@@ -336,7 +315,7 @@ async fn handle_file_event(
                 None,
                 severity,
             );
-            telemetry::send_telemetry(moose_url, moose_key, &malware_event).await;
+            send_malware_event(moose_url, moose_key, &malware_event).await;
 
             artifact_collector.track_file_create(&payload.open_path, Some(hdr.pid()));
 
@@ -368,7 +347,7 @@ async fn handle_registry_event(
                 None,
                 50,
             );
-            telemetry::send_telemetry(moose_url, moose_key, &malware_event).await;
+            send_malware_event(moose_url, moose_key, &malware_event).await;
 
             artifact_collector.track_registry_change(
                 &payload.key_name,
@@ -406,7 +385,7 @@ async fn handle_network_event(
             Some(format!("{}:{}", payload.src_ip, payload.src_port)),
             50,
         );
-        telemetry::send_telemetry(moose_url, moose_key, &malware_event).await;
+        send_malware_event(moose_url, moose_key, &malware_event).await;
 
         artifact_collector.track_network_ioc(
             "ip",
@@ -443,7 +422,7 @@ async fn handle_dns_event(
             Some(format!("Type: {}", payload.query_type)),
             20,
         );
-        telemetry::send_telemetry(moose_url, moose_key, &malware_event).await;
+        send_malware_event(moose_url, moose_key, &malware_event).await;
 
         artifact_collector.track_network_ioc(
             "domain",

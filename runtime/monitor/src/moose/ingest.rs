@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
+// event for malicious behavior caught during analysis
 #[derive(Serialize)]
 pub struct MalwareEvent {
     pub event_id: String,
@@ -46,7 +47,8 @@ impl MalwareEvent {
     }
 }
 
-pub async fn send_telemetry(base_url: &str, api_key: &str, event: &MalwareEvent) {
+// push malware findings to moose stream
+pub async fn send_malware_event(base_url: &str, api_key: &str, event: &MalwareEvent) {
     let client = reqwest::Client::new();
     let url = format!("{}/ingest/MalwareEvent", base_url);
     match client
@@ -58,13 +60,17 @@ pub async fn send_telemetry(base_url: &str, api_key: &str, event: &MalwareEvent)
     {
         Ok(resp) => {
             if !resp.status().is_success() {
-                eprintln!("Failed to send telemetry: {}", resp.status());
+                eprintln!(
+                    "failed to ship malware event to moose: status {}",
+                    resp.status()
+                );
             }
         }
-        Err(e) => eprintln!("Failed to send telemetry: {}", e),
+        Err(e) => eprintln!("moose connection error for malware event: {}", e),
     }
 }
 
+// track job state in moose
 pub async fn send_lifecycle(
     base_url: &str,
     api_key: &str,
@@ -93,11 +99,11 @@ pub async fn send_lifecycle(
     {
         Ok(resp) => {
             if !resp.status().is_success() {
-                eprintln!("Failed to send lifecycle event: {}", resp.status());
+                eprintln!("life cycle event failed to reach moose: {}", resp.status());
             } else {
-                println!("Reported Job Status: {}", status);
+                println!("job status updated: {}", status);
             }
         }
-        Err(e) => eprintln!("Failed to send lifecycle event: {}", e),
+        Err(e) => eprintln!("failed updating job status in moose: {}", e),
     }
 }

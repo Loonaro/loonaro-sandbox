@@ -1,8 +1,10 @@
+mod artifacts;
 mod config;
 mod results;
 mod rules;
 mod scanner;
 
+pub use artifacts::{ArtifactScanner, YaraMatchDetail, YaraScanSummary};
 pub use config::{RuleSource, ScanTarget, ScannerConfig};
 pub use results::{Match, MatchMeta, ScanResult, Severity, StringMatch};
 pub use rules::{CompiledRules, RuleManager};

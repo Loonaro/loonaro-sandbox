@@ -7,18 +7,12 @@ use tokio::io;
 
 #[derive(Encode, Decode, Debug)]
 pub enum Message {
-    /// After this message, the payload will follow as raw bytes of the specified length.
     #[n(0)]
     EventHeader(#[n(0)] EventHeader, #[n(1)] u32),
-    /// This happens when the agent has finished tracing. Also gives the number of events sent.
     #[n(1)]
     TracingFinished(#[n(0)] u64),
-    /// Memory dump captured from the agent. Payload follows.
     #[n(2)]
     MemoryDump(#[n(0)] MemoryDumpHeader, #[n(1)] u32),
-    /// FakeNet protocol event. Payload follows (JSON serialized ProtocolEvent).
-    #[n(3)]
-    FakeNetEvent(#[n(0)] u32),
 }
 
 #[derive(Encode, Decode, Debug, Clone)]

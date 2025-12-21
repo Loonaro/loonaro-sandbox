@@ -28,4 +28,4 @@ sha2 = "0.10"
 hex = "0.4"
 
 # Local crates
-yara-scanner = { path = "../yara-scanner" }
+yara-scanner = { path = "../lib/yara-scanner" }

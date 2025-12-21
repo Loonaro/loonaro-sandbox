@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use comms::{MemoryDumpHeader, Message, Transport};
 use etw::{EtwEvent, EventHeader};
-use fakenet::FakeNetBuilder;
 use one_collect::ReadOnly;
 use one_collect::etw::AncillaryData;
 use one_collect::event::EventData;
@@ -26,10 +25,6 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-const DEFAULT_DNS_PORT: u16 = 53;
-const DEFAULT_HTTP_PORT: u16 = 80;
-const DEFAULT_HTTPS_PORT: u16 = 443;
-
 const SANDBOX_CONFIG_PATH: &str =
     r"C:\Users\WDAGUtilityAccount\Desktop\loonaro\box_config\agent_config.json";
 const DEV_CONFIG_REL_PATH: &str = r"..\box_config\agent_config.json";
@@ -43,16 +38,7 @@ struct AgentConfig {
     ca_cert_pem: String,
     client_cert_pem: String,
     client_key_pem: String,
-    #[serde(default)]
-    fakenet: Option<AgentFakeNetConfig>,
     pub duration_seconds: u64,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct AgentFakeNetConfig {
-    dns_port: Option<u16>,
-    http_port: Option<u16>,
-    https_port: Option<u16>,
 }
 
 struct TlsClientTransport {
@@ -136,8 +122,6 @@ async fn main() -> Result<()> {
 
     println!("Connecting to Monitor at {}", remote_addr);
 
-    let fakenet_config = config.fakenet.clone();
-
     loop {
         match TcpStream::connect(&remote_addr).await {
             Ok(stream) => {
@@ -163,13 +147,6 @@ async fn main() -> Result<()> {
                                     break;
                                 }
                             }
-                        });
-
-                        let fakenet_tx = tx.clone();
-
-                        let fn_config = fakenet_config.clone();
-                        tokio::spawn(async move {
-                            start_fakenet(fakenet_tx, fn_config).await;
                         });
 
                         let dump_tx = tx.clone();
@@ -225,52 +202,6 @@ async fn main() -> Result<()> {
             CONNECT_RETRY_INTERVAL_SECONDS,
         ))
         .await;
-    }
-}
-
-async fn start_fakenet(tx: mpsc::Sender<Vec<u8>>, config: Option<AgentFakeNetConfig>) {
-    println!("Initializing FakeNet service...");
-
-    let dns_port = config
-        .as_ref()
-        .and_then(|c| c.dns_port)
-        .unwrap_or(DEFAULT_DNS_PORT);
-    let http_port = config
-        .as_ref()
-        .and_then(|c| c.http_port)
-        .unwrap_or(DEFAULT_HTTP_PORT);
-    let https_port = config
-        .as_ref()
-        .and_then(|c| c.https_port)
-        .unwrap_or(DEFAULT_HTTPS_PORT);
-
-    let fakenet = FakeNetBuilder::new()
-        .http(http_port)
-        .https(https_port)
-        .dns(dns_port)
-        .build();
-
-    let mut rx = fakenet.subscribe();
-
-    // Run FakeNet in background
-    tokio::spawn(async move {
-        if let Err(e) = fakenet.run().await {
-            eprintln!("FakeNet service error (check admin privileges?): {}", e);
-        }
-    });
-
-    while let Ok(event) = rx.recv().await {
-        if let Ok(json) = serde_json::to_vec(&event) {
-            let msg = Message::FakeNetEvent(json.len() as u32);
-            if let Ok(buf) = minicbor::to_vec(msg) {
-                if let Err(_) = tx.send(buf).await {
-                    break;
-                }
-                if let Err(_) = tx.send(json).await {
-                    break;
-                }
-            }
-        }
     }
 }
 

@@ -3,13 +3,11 @@ resolver = "2"
 members = [
     "agent",
     "monitor",
-    "orchestrator",
     "lib/comms",
     "lib/etw",
 
     "monitor-hook",
-    "fakenet",
-    "yara-scanner",
+    "lib/yara-scanner",
 ]
 
 

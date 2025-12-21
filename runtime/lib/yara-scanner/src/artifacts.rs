@@ -1,25 +1,17 @@
-//! YARA scanning module for runtime artifact analysis
-//!
-//! This module scans:
-//! - Dropped files created by malware during execution
-//! - Memory dumps when available
-//! - Process artifacts
-
+use crate::{ScanResult, Scanner, ScannerBuilder, Severity};
 use anyhow::Result;
-
 use std::path::Path;
 use tracing::info;
-use yara_scanner::{ScanResult, Scanner, ScannerBuilder, Severity};
 
 const MAX_SCAN_FILE_SIZE: u64 = 100 * 1024 * 1024; // 100MB
 
-/// YARA scanner for runtime artifact analysis
+/// High-level scanner specifically for malware artifacts (dropped files, memory dumps, etc.)
 pub struct ArtifactScanner {
     scanner: Scanner,
 }
 
 impl ArtifactScanner {
-    /// Create a new artifact scanner with builtin rules
+    /// Create a new artifact scanner with builtin rules and default malware-oriented settings
     pub fn new() -> Result<Self> {
         let scanner = ScannerBuilder::new()
             .timeout(30)
@@ -27,18 +19,31 @@ impl ArtifactScanner {
             .include_strings(true)
             .build()?;
 
-        info!("YARA artifact scanner initialized");
+        info!("Artifact YARA scanner initialized");
         Ok(Self { scanner })
     }
-    /// Scan all files in a directory (e.g., dropped files directory)
+
+    /// Scan all files in a directory recursively
     pub fn scan_directory<P: AsRef<Path>>(&self, path: P) -> Result<Vec<ScanResult>> {
         let path = path.as_ref();
         info!("Scanning directory for artifacts: {:?}", path);
         self.scanner.scan_directory(path)
     }
+
+    /// Scan a single file
+    pub fn scan_file<P: AsRef<Path>>(&self, path: P) -> Result<ScanResult> {
+        let path = path.as_ref();
+        info!("Scanning file: {:?}", path);
+        self.scanner.scan_file(path)
+    }
+
+    /// Scan a memory buffer
+    pub fn scan_buffer(&self, data: &[u8], identifier: &str) -> Result<ScanResult> {
+        self.scanner.scan_buffer(data, identifier)
+    }
 }
 
-/// Scan results summary for reporting
+/// Serialized summary of YARA scan results for reporting
 #[derive(Debug, serde::Serialize)]
 pub struct YaraScanSummary {
     pub total_files_scanned: usize,
@@ -57,6 +62,7 @@ pub struct YaraMatchDetail {
 }
 
 impl YaraScanSummary {
+    /// Create a summary from a list of scan results
     pub fn from_results(results: &[ScanResult]) -> Self {
         let mut rules_matched = Vec::new();
         let mut details = Vec::new();
