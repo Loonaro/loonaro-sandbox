@@ -4,10 +4,9 @@ members = [
     "agent",
     "monitor",
     "lib/comms",
-    "lib/etw",
 
     "monitor-hook",
-    "lib/yara-scanner",
+    "lib/yara-scanner", "lib/models",
 ]
 
 

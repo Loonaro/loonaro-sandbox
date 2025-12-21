@@ -1,0 +1,222 @@
+syntax = "proto3";
+
+package sigma;
+import "google/protobuf/descriptor.proto";
+extend google.protobuf.EnumValueOptions {
+  string sigma_name = 50001;
+}
+
+// https://github.com/SigmaHQ/sigma-specification/blob/main/specification/sigma-appendix-taxonomy.md
+
+enum SigmaCategory {
+  CATEGORY_UNSPECIFIED = 0 [(sigma_name) = ""];
+
+  // Generic & Cross-Platform Categories
+  CATEGORY_PROCESS_CREATION = 1 [(sigma_name) = "process_creation"];
+  CATEGORY_FILE_EVENT = 2 [(sigma_name) = "file_event"];
+  CATEGORY_FILE_CHANGE = 3 [(sigma_name) = "file_change"];
+  CATEGORY_NETWORK_CONNECTION = 4 [(sigma_name) = "network_connection"];
+  CATEGORY_DNS_QUERY = 5 [(sigma_name) = "dns_query"];
+  CATEGORY_IMAGE_LOAD = 6 [(sigma_name) = "image_load"];
+  CATEGORY_DRIVER_LOAD = 7 [(sigma_name) = "driver_load"];
+  CATEGORY_PROCESS_ACCESS = 8 [(sigma_name) = "process_access"];
+  CATEGORY_PROCESS_TERMINATION = 9 [(sigma_name) = "process_termination"];
+  CATEGORY_CREATE_REMOTE_THREAD = 10 [(sigma_name) = "create_remote_thread"];
+  CATEGORY_RAW_ACCESS_THREAD = 11 [(sigma_name) = "raw_access_thread"];
+  CATEGORY_SYSMON_STATUS = 12 [(sigma_name) = "sysmon_status"];
+
+  // Registry Categories
+  CATEGORY_REGISTRY_EVENT = 13 [(sigma_name) = "registry_event"];
+  CATEGORY_REGISTRY_ADD = 14 [(sigma_name) = "registry_add"];
+  CATEGORY_REGISTRY_DELETE = 15 [(sigma_name) = "registry_delete"];
+  CATEGORY_REGISTRY_SET = 16 [(sigma_name) = "registry_set"];
+  CATEGORY_REGISTRY_RENAME = 17 [(sigma_name) = "registry_rename"];
+
+  // Advanced Endpoint Categories
+  CATEGORY_PIPE_CREATED = 18 [(sigma_name) = "pipe_created"];
+  CATEGORY_WMI_EVENT = 19 [(sigma_name) = "wmi_event"];
+  CATEGORY_CLIPBOARD_CAPTURE = 20 [(sigma_name) = "clipboard_capture"];
+  CATEGORY_PROCESS_TAMPERING = 21 [(sigma_name) = "process_tampering"];
+  CATEGORY_FILE_DELETE = 22 [(sigma_name) = "file_delete"];
+  CATEGORY_FILE_DELETE_DETECTED = 23 [(sigma_name) = "file_delete_detected"];
+  CATEGORY_FILE_BLOCK_EXECUTABLE = 24 [(sigma_name) = "file_block_executable"];
+  CATEGORY_FILE_BLOCK_SHREDDING = 25 [(sigma_name) = "file_block_shredding"];
+  CATEGORY_FILE_EXECUTABLE_DETECTED = 26 [(sigma_name) = "file_executable_detected"];
+  CATEGORY_SYSMON_ERROR = 27 [(sigma_name) = "sysmon_error"];
+  CATEGORY_FILE_ACCESS = 28 [(sigma_name) = "file_access"];
+  CATEGORY_FILE_RENAME = 29 [(sigma_name) = "file_rename"];
+
+  // PowerShell Categories
+  CATEGORY_PS_CLASSIC_START = 30 [(sigma_name) = "ps_classic_start"];
+  CATEGORY_PS_CLASSIC_PROVIDER_START = 31 [(sigma_name) = "ps_classic_provider_start"];
+  CATEGORY_PS_CLASSIC_SCRIPT = 32 [(sigma_name) = "ps_classic_script"];
+  CATEGORY_PS_MODULE = 33 [(sigma_name) = "ps_module"];
+  CATEGORY_PS_SCRIPT = 34 [(sigma_name) = "ps_script"];
+
+  // Infrastructure Categories
+  CATEGORY_ANTIVIRUS = 35 [(sigma_name) = "antivirus"];
+  CATEGORY_DATABASE = 36 [(sigma_name) = "database"];
+  CATEGORY_DNS = 37 [(sigma_name) = "dns"];
+  CATEGORY_FIREWALL = 38 [(sigma_name) = "firewall"];
+  CATEGORY_PROXY = 39 [(sigma_name) = "proxy"];
+  CATEGORY_WEBSERVER = 40 [(sigma_name) = "webserver"];
+  CATEGORY_APPLICATION = 41 [(sigma_name) = "application"];
+  CATEGORY_NETWORK = 42 [(sigma_name) = "network"];
+}
+
+// --- Telemetry Events ---
+
+message MalwareEvent {
+  string session_id = 1;
+  string timestamp = 2; // RFC3339
+  uint32 severity = 3;  // 0-100
+  SigmaCategory category = 4 [json_name = "logsource.category"];
+  
+  oneof event {
+    ProcessEvent process = 5;
+    FileEvent file = 6;
+    NetworkEvent network = 7;
+    RegistryEvent registry = 8;
+  }
+}
+
+message ProcessEvent {
+  // Sigma Taxonomy v2.1.0 - Generic Process Creation (Windows/Sysmon alignment)
+  string utc_time = 1 [json_name = "UtcTime"];
+  string process_guid = 2 [json_name = "ProcessGuid"];
+  uint32 process_id = 3 [json_name = "ProcessId"];
+  string image = 4 [json_name = "Image"];
+  string file_version = 5 [json_name = "FileVersion"];
+  string description = 6 [json_name = "Description"];
+  string product = 7 [json_name = "Product"];
+  string company = 8 [json_name = "Company"];
+  string command_line = 9 [json_name = "CommandLine"];
+  string current_directory = 10 [json_name = "CurrentDirectory"];
+  string user = 11 [json_name = "User"];
+  string logon_guid = 12 [json_name = "LogonGuid"];
+  string logon_id = 13 [json_name = "LogonId"];
+  uint32 terminal_session_id = 14 [json_name = "TerminalSessionId"];
+  string integrity_level = 15 [json_name = "IntegrityLevel"];
+  
+  // Hashes (Flat per Taxonomy)
+  string md5 = 16 [json_name = "md5"];
+  string sha1 = 17 [json_name = "sha1"];
+  string sha256 = 18 [json_name = "sha256"];
+  string imphash = 19 [json_name = "imphash"];
+  
+  // Parent info
+  string parent_process_guid = 20 [json_name = "ParentProcessGuid"];
+  uint32 parent_process_id = 21 [json_name = "ParentProcessId"];
+  string parent_image = 22 [json_name = "ParentImage"];
+  string parent_command_line = 23 [json_name = "ParentCommandLine"];
+}
+
+message FileEvent {
+  // Sysmon File Event (ID 11)
+  string utc_time = 1 [json_name = "UtcTime"];
+  string process_guid = 2 [json_name = "ProcessGuid"];
+  uint32 process_id = 3 [json_name = "ProcessId"];
+  string image = 4 [json_name = "Image"];
+  string target_filename = 5 [json_name = "TargetFilename"];
+  string creation_utc_time = 6 [json_name = "CreationUtcTime"];
+  string user = 7 [json_name = "User"];
+  
+  // Internal/Action tracking
+  string action = 8;
+  string sha256 = 9 [json_name = "sha256"];
+}
+
+message NetworkEvent {
+  string protocol = 1 [json_name = "network.protocol"];
+  string source_ip = 2 [json_name = "source.ip"];
+  uint32 source_port = 3 [json_name = "source.port"];
+  string destination_ip = 4 [json_name = "destination.ip"];
+  uint32 destination_port = 5 [json_name = "destination.port"];
+  string image = 6 [json_name = "Image"];
+  string user = 7 [json_name = "User"];
+  string query_name = 8 [json_name = "QueryName"];
+  
+  // Taxonomy additions
+  string network_connection_state = 9 [json_name = "network.state"];
+  uint64 source_packets = 10 [json_name = "source.packets"];
+  uint64 destination_packets = 11 [json_name = "destination.packets"];
+  uint64 source_bytes = 12 [json_name = "source.bytes"];
+  uint64 destination_bytes = 13 [json_name = "destination.bytes"];
+  string community_id = 14 [json_name = "network.community_id"];
+  
+  // DNS Specifics (Taxonomy)
+  // We can group these or keep flat. Taxonomy lists `dns.id`, `dns.question.name`, etc.
+  string dns_id = 15 [json_name = "dns.id"];
+  string dns_question_type = 16 [json_name = "dns.question.type"];
+  string dns_answers_data = 17 [json_name = "dns.answers.data"];
+  string dns_response_code = 18 [json_name = "dns.response.code"];
+}
+enum RegistryEventType {
+  SET_VALUE = 0 [(sigma_name) = "SetValue"];
+  DELETE_VALUE = 1 [(sigma_name) = "DeleteValue"];
+  CREATE_KEY = 2 [(sigma_name) = "CreateKey"];
+  DELETE_KEY = 3 [(sigma_name) = "DeleteKey"];
+}
+message RegistryEvent {
+  string target_object = 1 [json_name = "TargetObject"];      // Sigma: TargetObject
+  string details = 2 [json_name = "Details"];            // Sigma: Details
+  string image = 3 [json_name = "Image"];              // Sigma: Image (Process)
+  string action = 4 [json_name = "Action"];             // "SET_VALUE", "CREATE_KEY", "DELETE" ... (Registry EventID mappings)
+  string user = 5 [json_name = "User"];               // Sigma: User
+  string event_type = 6 [json_name = "EventType"];         // EventID map (SetValue, CreateKey, etc)
+}
+
+// --- Health & Control ---
+
+message Heartbeat {
+  string session_id = 1;
+  uint64 uptime_seconds = 2;
+  float cpu_usage_percent = 3;
+  uint64 memory_usage_bytes = 4;
+}
+
+message Command {
+  enum Action {
+    UNKNOWN = 0;
+    STOP_TRACING = 1; // Graceful shutdown
+    KILL = 2;         // Immediate exit
+  }
+  Action action = 1;
+  string reason = 2;
+}
+
+message CommandAck {
+  string session_id = 1;
+  Command.Action action = 2;
+  bool success = 3;
+}
+
+// --- Comms ---
+// Message sent out from Agent to Monitor
+message AgentMessage {
+  oneof payload {
+    MalwareEvent event = 1;
+    Heartbeat heartbeat = 2;
+    ArtifactUpload artifact = 3;
+    CommandAck command_ack = 4;
+  }
+}
+
+// Message sent out from Monitor to Agent
+message MonitorMessage {
+  oneof payload {
+    Command command = 1;
+  }
+}
+
+// --- Heavy Artifacts (Chunked) ---
+
+message ArtifactUpload {
+  string session_id = 1;
+  string file_path = 2; // Virtual path in guest
+  string type = 3;      // "SCREENSHOT", "PCAP", "DROPPED_FILE", "MEMORY_DUMP"
+  uint64 offset = 4;
+  uint64 total_size = 5;
+  bytes data = 6;       // Max chunk size e.g. 1MB
+  bool is_last_chunk = 7;
+}

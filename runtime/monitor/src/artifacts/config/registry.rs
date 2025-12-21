@@ -34,10 +34,6 @@ impl Default for RegistryCollectionConfig {
 }
 
 impl RegistryCollectionConfig {
-    // aggressive removed
-
-    // minimal removed
-
     pub fn should_track(&self, key: &str) -> bool {
         if !self.enabled {
             return false;

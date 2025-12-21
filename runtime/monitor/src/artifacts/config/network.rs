@@ -38,10 +38,6 @@ impl Default for NetworkCollectionConfig {
 }
 
 impl NetworkCollectionConfig {
-    // aggressive removed
-
-    // minimal removed
-
     pub fn should_track_connection(&self, dest_ip: &str, dest_port: u16, protocol: &str) -> bool {
         if !self.enabled {
             return false;

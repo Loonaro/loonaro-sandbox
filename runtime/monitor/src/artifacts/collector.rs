@@ -39,6 +39,7 @@ impl ArtifactCollector {
         }
     }
 
+    #[inline]
     fn timestamp() -> String {
         Utc::now().to_rfc3339()
     }
@@ -136,68 +137,78 @@ impl ArtifactCollector {
     }
 
     /// Save memory dump immediately
-    pub async fn save_memory_dump(
+
+    pub async fn save_artifact_chunk(
         &mut self,
-        pid: u32,
-        process_name: &str,
-        base_address: u64,
-        protection: &str,
-        trigger: &str,
-        data: &[u8],
-    ) -> Result<Option<PathBuf>> {
-        if !self.config.memory.enabled {
-            self.stats.memory_dumps_skipped += 1;
-            return Ok(None);
-        }
-
-        if !self.config.memory.should_dump_process(process_name) {
-            self.stats.memory_dumps_skipped += 1;
-            return Ok(None);
-        }
-
+        artifact: &loonaro_models::sigma::ArtifactUpload,
+    ) -> Result<()> {
         let max_bytes = self.config.settings.max_total_size_mb * 1024 * 1024;
-        if self.total_collected_bytes + data.len() as u64 > max_bytes {
-            self.stats.memory_dumps_skipped += 1;
-            warn!("Skipping memory dump - max size reached");
-            return Ok(None);
+        if self.total_collected_bytes + artifact.data.len() as u64 > max_bytes {
+            warn!("Skipping artifact chunk - max size reached");
+            return Err(anyhow::anyhow!("Max size reached"));
         }
 
-        let dump_dir = self.output_dir.join("memory");
-        if !dump_dir.exists() {
-            fs::create_dir_all(&dump_dir).await?;
+        let sub_dir = if artifact.r#type == "MEMORY_DUMP" {
+            "memory"
+        } else {
+            "uploads"
+        };
+        let dir = self.output_dir.join(sub_dir);
+        if !dir.exists() {
+            fs::create_dir_all(&dir).await?;
         }
 
-        // Filename: {process_name}_{pid}_0x{base}_[{trigger}].bin
-        // Sanitize filename
-        let safe_name = process_name.replace(|c: char| !c.is_alphanumeric() && c != '.', "_");
-        let safe_trigger = trigger.replace(|c: char| !c.is_alphanumeric(), "_");
+        let safe_name = artifact
+            .file_path
+            .replace(|c: char| !c.is_alphanumeric() && c != '.', "_");
+        let file_path = dir.join(&safe_name);
 
-        let filename = format!(
-            "{}_{}_0x{:x}_{}.bin",
-            safe_name, pid, base_address, safe_trigger
-        );
-        let file_path = dump_dir.join(&filename);
+        use tokio::io::AsyncWriteExt;
+        let mut file = if artifact.offset == 0 {
+            fs::File::create(&file_path).await?
+        } else {
+            fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&file_path)
+                .await?
+        };
 
-        fs::write(&file_path, data).await?;
+        file.write_all(&artifact.data).await?;
 
-        self.total_collected_bytes += data.len() as u64;
-        self.stats.memory_dumps += 1;
-        self.stats.bytes_collected += data.len() as u64;
+        self.total_collected_bytes += artifact.data.len() as u64;
+        self.stats.bytes_collected += artifact.data.len() as u64;
 
-        info!("Saved memory dump: {:?}", file_path);
+        if artifact.is_last_chunk {
+            info!("Saved artifact fully: {:?}", file_path);
+            let size = fs::metadata(&file_path).await?.len();
 
-        self.artifacts.push(Artifact::MemoryDump {
-            pid,
-            process_name: process_name.to_string(),
-            base_address,
-            size: data.len() as u64,
-            protection: protection.to_string(),
-            dump_path: file_path.clone(),
-            trigger: trigger.to_string(),
-            timestamp: Self::timestamp(),
-        });
-
-        Ok(Some(file_path))
+            // Map artifact type to enum if possible, or use Generic/Other
+            // For now simple mapping:
+            if artifact.r#type == "MEMORY_DUMP" {
+                self.stats.memory_dumps += 1;
+                // We don't have all details like base_address here easily unless encoded in filename or artifact metadata
+                // For now, simpler tracking:
+                self.artifacts.push(Artifact::MemoryDump {
+                    pid: 0, // Unknown
+                    process_name: "unknown".to_string(),
+                    base_address: 0,
+                    size,
+                    protection: "unknown".to_string(),
+                    dump_path: file_path,
+                    trigger: "agent_upload".to_string(),
+                    timestamp: Self::timestamp(),
+                });
+            } else {
+                self.artifacts.push(Artifact::Other {
+                    name: artifact.file_path.clone(),
+                    path: file_path.to_string_lossy().to_string(),
+                    size,
+                    timestamp: Self::timestamp(),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub async fn collect_final_versions(&mut self) -> Result<Vec<PathBuf>> {

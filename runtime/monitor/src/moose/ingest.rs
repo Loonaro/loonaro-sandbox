@@ -1,51 +1,6 @@
-use chrono::{DateTime, Utc};
-use serde::Serialize;
+use chrono::Utc;
+pub use loonaro_models::sigma::MalwareEvent;
 use uuid::Uuid;
-
-// event for malicious behavior caught during analysis
-#[derive(Serialize)]
-pub struct MalwareEvent {
-    pub event_id: String,
-    pub timestamp: DateTime<Utc>,
-    pub session_id: String,
-    pub process_name: String,
-    pub pid: u32,
-    pub ppid: u32,
-    pub action: String,
-    pub target_path: Option<String>,
-    pub command_line: Option<String>,
-    pub hashes: Option<Vec<String>>,
-    pub user_sid: Option<String>,
-    pub severity: u32,
-}
-
-impl MalwareEvent {
-    pub fn new(
-        session_id: &str,
-        process_name: String,
-        pid: u32,
-        ppid: u32,
-        action: &str,
-        target_path: Option<String>,
-        command_line: Option<String>,
-        severity: u32,
-    ) -> Self {
-        Self {
-            event_id: Uuid::new_v4().to_string(),
-            timestamp: Utc::now(),
-            session_id: session_id.to_string(),
-            process_name,
-            pid,
-            ppid,
-            action: action.to_string(),
-            target_path,
-            command_line,
-            hashes: None,
-            user_sid: None,
-            severity,
-        }
-    }
-}
 
 // push malware findings to moose stream
 pub async fn send_malware_event(base_url: &str, api_key: &str, event: &MalwareEvent) {

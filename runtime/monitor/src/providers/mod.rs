@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::config::NetworkMode;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ProvisionConfig<'a> {
     // the analysis session id responsible for this provision
     pub session_id: &'a str,

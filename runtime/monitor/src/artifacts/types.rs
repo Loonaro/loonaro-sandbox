@@ -43,6 +43,12 @@ pub enum Artifact {
         pid: Option<u32>,
         timestamp: String,
     },
+    Other {
+        name: String,
+        path: String,
+        size: u64,
+        timestamp: String,
+    },
 }
 
 /// File event type

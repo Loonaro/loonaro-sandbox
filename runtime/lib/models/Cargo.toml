@@ -1,0 +1,12 @@
+[package]
+name = "loonaro-models"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+prost = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+
+[build-dependencies]
+prost-build = "0.13"
+protoc-bin-vendored = "3.0"

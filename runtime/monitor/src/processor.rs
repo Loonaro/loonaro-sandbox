@@ -1,126 +1,68 @@
-use anyhow::{Context, Result};
-use comms::{MemoryDumpHeader, Message, Transport};
-use etw::{EtwEvent, Event, EventPayload};
-use minicbor::{Decode, Decoder};
-use rand::Rng;
-
 use crate::artifacts::ArtifactCollector;
-use crate::moose::{MalwareEvent, send_lifecycle, send_malware_event};
+use crate::moose::{send_lifecycle, send_malware_event};
+use anyhow::Result;
+use comms::Connection;
+use loonaro_models::sigma::{AgentMessage, MalwareEvent, MonitorMessage, agent_message};
+use tokio::io::{AsyncRead, AsyncWrite};
 
-enum ReadState {
-    ExpectHeader,
-    ExpectPayload {
-        size: usize,
-        header: Option<etw::EventHeader>,
-    },
-    ExpectMemoryDumpPayload {
-        size: usize,
-        header: Option<MemoryDumpHeader>,
-    },
-}
+// We need to alias the Connection type since it's generic now
+type MonitorConnection<S> = Connection<S, AgentMessage, MonitorMessage>;
 
 pub async fn collect(
-    transport: &mut impl Transport,
-    all_events: &mut Vec<Event>,
+    connection: &mut MonitorConnection<impl AsyncRead + AsyncWrite + Unpin>,
+    all_events: &mut Vec<MalwareEvent>,
     moose_url: &str,
     moose_key: &str,
     session_id: &str,
     artifact_collector: &mut ArtifactCollector,
+    duration: std::time::Duration,
 ) -> Result<()> {
-    let mut inbox: Vec<u8> = Vec::with_capacity(64 * 1024);
-
-    let mut state = ReadState::ExpectHeader;
-
-    let mut buf = vec![0u8; 16 * 1024];
+    let sleep = tokio::time::sleep(duration);
+    tokio::pin!(sleep);
+    let mut stop_command_sent = false;
 
     loop {
-        let n = transport
-            .receive(&mut buf)
-            .await
-            .context("Failed to receive events")?;
-        if n == 0 {
-            return Err(anyhow::anyhow!("Connection closed by peer"));
-        }
-        inbox.extend_from_slice(&buf[..n]);
+        tokio::select! {
+            _ = &mut sleep => {
+                 if !stop_command_sent {
+                     println!("Time limit reached. Sending Stop command to agent...");
 
-        loop {
-            match &mut state {
-                ReadState::ExpectHeader => {
-                    let mut dec = Decoder::new(&inbox);
-                    match Message::decode(&mut dec, &mut ()) {
-                        Ok(message) => {
-                            let consumed = dec.position();
-                            inbox.drain(0..consumed);
+                     // Construct MonitorMessage with Command
+                     let cmd = loonaro_models::sigma::Command {
+                         action: loonaro_models::sigma::command::Action::StopTracing.into(),
+                         reason: "Timeout".to_string(),
+                     };
 
-                            if let Some(new_state) = handle_message(
-                                message, all_events, moose_url, moose_key, session_id,
-                            )
-                            .await?
-                            {
-                                state = new_state;
-                            } else {
-                                return Ok(());
-                            }
-                        }
-                        Err(e) => {
-                            let msg = e.to_string();
-                            if msg.contains("end of input") || msg.contains("unexpected EOF") {
-                                break;
-                            } else {
-                                eprintln!("Failed to decode message: {}", e);
-                                if !inbox.is_empty() {
-                                    inbox.drain(0..1);
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
+                     let msg = MonitorMessage {
+                         payload: Some(loonaro_models::sigma::monitor_message::Payload::Command(cmd)),
+                     };
+                     connection.send(msg).await?;
+
+                     stop_command_sent = true;
+                     sleep.as_mut().reset(tokio::time::Instant::now() + std::time::Duration::from_secs(10));
+                 } else {
+                     println!("Agent did not disconnect in time. Force closing.");
+                     return Ok(());
+                 }
+            }
+            res = connection.recv() => {
+                match res {
+                    Some(Ok(msg)) => {
+                        handle_message(
+                            msg,
+                            all_events,
+                            moose_url,
+                            moose_key,
+                            session_id,
+                            artifact_collector
+                        ).await?;
                     }
-                }
-                ReadState::ExpectPayload { size, header } => {
-                    if inbox.len() < *size {
-                        break;
+                    Some(Err(e)) => {
+                        return Err(anyhow::anyhow!("Connection error: {}", e));
                     }
-                    let payload: Vec<u8> = inbox.drain(0..*size).collect();
-                    let hdr = match header.take() {
-                        Some(h) => h,
-                        None => {
-                            eprintln!("Missing header for payload; resetting state");
-                            state = ReadState::ExpectHeader;
-                            continue;
-                        }
-                    };
-
-                    handle_payload(
-                        hdr,
-                        payload,
-                        all_events,
-                        moose_url,
-                        moose_key,
-                        session_id,
-                        artifact_collector,
-                    )
-                    .await;
-
-                    state = ReadState::ExpectHeader;
-                }
-                ReadState::ExpectMemoryDumpPayload { size, header } => {
-                    if inbox.len() < *size {
-                        break;
+                    None => { // eof
+                        return Ok(());
                     }
-                    let payload: Vec<u8> = inbox.drain(0..*size).collect();
-                    let hdr = match header.take() {
-                        Some(h) => h,
-                        None => {
-                            eprintln!("Missing header for memory dump; resetting state");
-                            state = ReadState::ExpectHeader;
-                            continue;
-                        }
-                    };
-
-                    handle_memory_dump(hdr, payload, artifact_collector).await;
-
-                    state = ReadState::ExpectHeader;
                 }
             }
         }
@@ -128,338 +70,95 @@ pub async fn collect(
 }
 
 async fn handle_message(
-    message: Message,
-    all_events: &Vec<Event>,
+    message: AgentMessage,
+    all_events: &mut Vec<MalwareEvent>,
     moose_url: &str,
     moose_key: &str,
     session_id: &str,
-) -> Result<Option<ReadState>> {
-    match message {
-        Message::EventHeader(header, payload_size) => Ok(Some(ReadState::ExpectPayload {
-            size: payload_size as usize,
-            header: Some(header),
-        })),
-        Message::MemoryDump(header, payload_size) => Ok(Some(ReadState::ExpectMemoryDumpPayload {
-            size: payload_size as usize,
-            header: Some(header),
-        })),
-        Message::TracingFinished(n) => {
+    artifact_collector: &mut ArtifactCollector,
+) -> Result<()> {
+    let payload = match message.payload {
+        Some(p) => p,
+        None => return Ok(()), // Empty message?
+    };
+
+    match payload {
+        agent_message::Payload::Event(event) => {
+            send_malware_event(moose_url, moose_key, &event).await;
+
+            extract_iocs(&event, artifact_collector);
+
+            all_events.push(event);
+            Ok(())
+        }
+        agent_message::Payload::Heartbeat(hb) => {
             println!(
-                "Tracing finished. Total events received: {}",
-                all_events.len()
+                "Received Heartbeat: uptime={}s CPU={}%, RAM={} bytes",
+                hb.uptime_seconds, hb.cpu_usage_percent, hb.memory_usage_bytes
             );
-            let events_dropped = n as isize - all_events.len() as isize;
-            if events_dropped > 0 {
-                eprintln!(
-                    "Warning: {} events were traced but not received",
-                    events_dropped
-                );
+            Ok(())
+        }
+        agent_message::Payload::Artifact(artifact) => {
+            println!(
+                "Received Artifact: {} ({} bytes, offset {})",
+                artifact.file_path,
+                artifact.data.len(),
+                artifact.offset
+            );
+            if let Err(e) = artifact_collector.save_artifact_chunk(&artifact).await {
+                eprintln!("Failed to save artifact chunk: {}", e);
             }
-
-            send_lifecycle(
-                moose_url,
-                moose_key,
-                session_id,
-                "COMPLETED",
-                &format!("Tracing finished. Events: {}", all_events.len()),
-            )
-            .await;
-
-            Ok(None)
+            Ok(())
         }
-    }
-}
-
-async fn handle_payload(
-    hdr: etw::EventHeader,
-    payload: Vec<u8>,
-    all_events: &mut Vec<Event>,
-    moose_url: &str,
-    moose_key: &str,
-    session_id: &str,
-    artifact_collector: &mut ArtifactCollector,
-) {
-    let event_type = *hdr.event_type();
-    match event_type {
-        EtwEvent::SystemProcess(_) => {
-            handle_process_event(hdr, payload, all_events, moose_url, moose_key, session_id).await;
-        }
-        EtwEvent::Sysmon => {
-            eprintln!("Sysmon events are not yet supported");
-        }
-        EtwEvent::File(ref file_event) => {
-            handle_file_event(
-                hdr,
-                payload,
-                file_event,
-                all_events,
-                moose_url,
-                moose_key,
-                session_id,
-                artifact_collector,
-            )
-            .await;
-        }
-        EtwEvent::Registry(ref reg_event) => {
-            handle_registry_event(
-                hdr,
-                payload,
-                reg_event,
-                all_events,
-                moose_url,
-                moose_key,
-                session_id,
-                artifact_collector,
-            )
-            .await;
-        }
-        EtwEvent::Network(ref net_event) => {
-            handle_network_event(
-                hdr,
-                payload,
-                net_event,
-                all_events,
-                moose_url,
-                moose_key,
-                session_id,
-                artifact_collector,
-            )
-            .await;
-        }
-        EtwEvent::Dns(ref dns_event) => {
-            handle_dns_event(
-                hdr,
-                payload,
-                dns_event,
-                all_events,
-                moose_url,
-                moose_key,
-                session_id,
-                artifact_collector,
-            )
-            .await;
-        }
-    }
-}
-
-async fn handle_process_event(
-    hdr: etw::EventHeader,
-    payload: Vec<u8>,
-    all_events: &mut Vec<Event>,
-    moose_url: &str,
-    moose_key: &str,
-    session_id: &str,
-) {
-    let process_event = match etw::payload::process::ProcessEventPayload::parse(&payload) {
-        Ok(ev) => ev,
-        Err(e) => {
-            eprintln!("Failed to parse process event payload: {}", e);
-            return;
-        }
-    };
-
-    let action = match hdr.event_type() {
-        EtwEvent::SystemProcess(e) => match e {
-            etw::ProcessEvent::ProcessCreate => "ProcessCreate",
-            etw::ProcessEvent::ProcessTerminate => "ProcessTerminate",
-        },
-        EtwEvent::Sysmon => "Sysmon",
-        _ => "Unknown",
-    };
-
-    let severity = {
-        let mut rng = rand::thread_rng();
-        rng.gen_range(0..100)
-    };
-
-    let malware_event = MalwareEvent::new(
-        session_id,
-        process_event.image().to_string(),
-        process_event.pid(),
-        process_event.ppid(),
-        action,
-        Some(process_event.cmd().to_string()),
-        Some(process_event.cmd().to_string()),
-        severity,
-    );
-
-    send_malware_event(moose_url, moose_key, &malware_event).await;
-
-    let event = Event::new(hdr, EventPayload::Process(process_event));
-    all_events.push(event);
-}
-
-async fn handle_file_event(
-    hdr: etw::EventHeader,
-    payload: Vec<u8>,
-    event_type: &etw::FileEvent,
-    all_events: &mut Vec<Event>,
-    moose_url: &str,
-    moose_key: &str,
-    session_id: &str,
-    artifact_collector: &mut ArtifactCollector,
-) {
-    if let etw::FileEvent::Create = event_type {
-        if let Ok(payload) = etw::payload::file::FileCreatePayload::parse(&payload) {
-            let severity = {
-                let mut rng = rand::thread_rng();
-                rng.gen_range(0..50)
-            };
-            let malware_event = MalwareEvent::new(
-                session_id,
-                format!("PID:{}", hdr.pid()),
-                hdr.pid(),
-                0,
-                "FileCreate",
-                Some(payload.open_path.clone()),
-                None,
-                severity,
+        agent_message::Payload::CommandAck(ack) => {
+            println!(
+                "Received CommandAck: {:?} Success={}",
+                ack.action, ack.success
             );
-            send_malware_event(moose_url, moose_key, &malware_event).await;
-
-            artifact_collector.track_file_create(&payload.open_path, Some(hdr.pid()));
-
-            let event = Event::new(hdr, EventPayload::File(payload));
-            all_events.push(event);
+            if ack.action == loonaro_models::sigma::command::Action::StopTracing as i32 {
+                println!("Agent finished tracing. Events: {}", all_events.len());
+                send_lifecycle(
+                    moose_url,
+                    moose_key,
+                    session_id,
+                    "COMPLETED",
+                    &format!("Tracing finished. Events: {}", all_events.len()),
+                )
+                .await;
+            }
+            Ok(())
         }
     }
 }
 
-async fn handle_registry_event(
-    hdr: etw::EventHeader,
-    payload: Vec<u8>,
-    event_type: &etw::RegistryEvent,
-    all_events: &mut Vec<Event>,
-    moose_url: &str,
-    moose_key: &str,
-    session_id: &str,
-    artifact_collector: &mut ArtifactCollector,
-) {
-    if let etw::RegistryEvent::SetValue = event_type {
-        if let Ok(payload) = etw::payload::registry::RegistryEventPayload::parse(&payload) {
-            let malware_event = MalwareEvent::new(
-                session_id,
-                format!("PID:{}", hdr.pid()),
-                hdr.pid(),
-                0,
-                "RegistrySetValue",
-                Some(payload.key_name.clone()),
-                None,
-                50,
-            );
-            send_malware_event(moose_url, moose_key, &malware_event).await;
+fn extract_iocs(event: &MalwareEvent, collector: &mut ArtifactCollector) {
+    // Helper to pull basic details for the local report summary.
+    // Ideally Moose handles this, but we keep local tracking for "artifacts.json".
 
-            artifact_collector.track_registry_change(
-                &payload.key_name,
-                None,
-                None,
-                "SetValue",
-                Some(hdr.pid()),
-            );
-
-            let event = Event::new(hdr, EventPayload::Registry(payload));
-            all_events.push(event);
+    if let Some(inner) = &event.event {
+        match inner {
+            loonaro_models::sigma::malware_event::Event::Process(_) => {}
+            loonaro_models::sigma::malware_event::Event::File(f) => {
+                if f.action == "CREATE" {
+                    collector.track_file_create(&f.target_filename, None);
+                }
+            }
+            loonaro_models::sigma::malware_event::Event::Network(n) => {
+                if n.protocol == "TCP" || n.protocol == "HTTP" {
+                    collector.track_network_ioc(
+                        "ip",
+                        &n.destination_ip,
+                        &n.protocol,
+                        Some(n.destination_port as u16),
+                        None,
+                    );
+                } else if n.protocol == "DNS" {
+                    collector.track_network_ioc("domain", &n.query_name, "dns", None, None);
+                }
+            }
+            loonaro_models::sigma::malware_event::Event::Registry(r) => {
+                collector.track_registry_change(&r.target_object, None, None, &r.action, None);
+            }
         }
-    }
-}
-
-async fn handle_network_event(
-    hdr: etw::EventHeader,
-    payload: Vec<u8>,
-    event_type: &etw::NetworkEvent,
-    all_events: &mut Vec<Event>,
-    moose_url: &str,
-    moose_key: &str,
-    session_id: &str,
-    artifact_collector: &mut ArtifactCollector,
-) {
-    let etw::NetworkEvent::Connect = event_type;
-    if let Ok(payload) = etw::payload::network::NetworkEventPayload::parse(&payload) {
-        let malware_event = MalwareEvent::new(
-            session_id,
-            format!("PID:{}", hdr.pid()),
-            hdr.pid(),
-            0,
-            "TcpIpConnect",
-            Some(format!("{}:{}", payload.dest_ip, payload.dest_port)),
-            Some(format!("{}:{}", payload.src_ip, payload.src_port)),
-            50,
-        );
-        send_malware_event(moose_url, moose_key, &malware_event).await;
-
-        artifact_collector.track_network_ioc(
-            "ip",
-            &format!("{}:{}", payload.dest_ip, payload.dest_port),
-            "tcp",
-            Some(payload.dest_port),
-            Some(hdr.pid()),
-        );
-
-        let event = Event::new(hdr, EventPayload::Network(payload));
-        all_events.push(event);
-    }
-}
-
-async fn handle_dns_event(
-    hdr: etw::EventHeader,
-    payload: Vec<u8>,
-    event_type: &etw::DnsEvent,
-    all_events: &mut Vec<Event>,
-    moose_url: &str,
-    moose_key: &str,
-    session_id: &str,
-    artifact_collector: &mut ArtifactCollector,
-) {
-    let etw::DnsEvent::Query = event_type;
-    if let Ok(payload) = etw::payload::dns::DnsEventPayload::parse(&payload) {
-        let malware_event = MalwareEvent::new(
-            session_id,
-            format!("PID:{}", hdr.pid()),
-            hdr.pid(),
-            0,
-            "DnsQuery",
-            Some(payload.query_name.clone()),
-            Some(format!("Type: {}", payload.query_type)),
-            20,
-        );
-        send_malware_event(moose_url, moose_key, &malware_event).await;
-
-        artifact_collector.track_network_ioc(
-            "domain",
-            &payload.query_name,
-            "dns",
-            None,
-            Some(hdr.pid()),
-        );
-
-        let event = Event::new(hdr, EventPayload::Dns(payload));
-        all_events.push(event);
-    }
-}
-
-async fn handle_memory_dump(
-    hdr: MemoryDumpHeader,
-    payload: Vec<u8>,
-    artifact_collector: &mut ArtifactCollector,
-) {
-    println!(
-        "Received memory dump ({} bytes) from PID {} Trigger: {}",
-        payload.len(),
-        hdr.pid,
-        hdr.trigger
-    );
-
-    if let Err(e) = artifact_collector
-        .save_memory_dump(
-            hdr.pid,
-            &hdr.process_name,
-            hdr.region_base,
-            &hdr.protection,
-            &hdr.trigger,
-            &payload,
-        )
-        .await
-    {
-        eprintln!("Failed to save memory dump: {}", e);
     }
 }

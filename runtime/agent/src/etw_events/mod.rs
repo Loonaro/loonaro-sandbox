@@ -1,5 +1,13 @@
 pub mod dns;
 pub mod file;
+pub mod handle;
+pub mod image_load;
+pub mod ldap;
 pub mod network;
+pub mod pipe;
+pub mod pnp;
+pub mod powershell;
 pub mod process;
 pub mod registry;
+pub mod thread;
+pub mod wmi;

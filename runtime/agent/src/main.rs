@@ -1,32 +1,35 @@
+mod cache;
 mod commandline;
 mod etw_events;
 mod injector;
 mod memory;
 mod pipe_server;
+mod screenshots;
+mod utils;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use comms::{MemoryDumpHeader, Message, Transport};
-use etw::{EtwEvent, EventHeader};
-use one_collect::ReadOnly;
-use one_collect::etw::AncillaryData;
-use one_collect::event::EventData;
+use loonaro_models::sigma::{agent_message, monitor_message, AgentMessage, MonitorMessage};
+use comms::Connection;
 use one_collect::helpers::callstack::{CallstackHelp, CallstackHelper};
 use rustls::ClientConfig;
 use rustls::pki_types::{CertificateDer, ServerName};
 use serde::Deserialize;
 use std::cell::RefCell;
-use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio_rustls::{TlsConnector, client::TlsStream};
+use tokio_rustls::TlsConnector;
 
+// Alias connection type
+type AgentConnection<S> = Connection<S, MonitorMessage, AgentMessage>;
+
+#[cfg(target_os = "windows")]
 const SANDBOX_CONFIG_PATH: &str =
     r"C:\Users\WDAGUtilityAccount\Desktop\loonaro\box_config\agent_config.json";
+#[cfg(target_os = "windows")]
 const DEV_CONFIG_REL_PATH: &str = r"..\box_config\agent_config.json";
 
 const CONNECT_RETRY_INTERVAL_SECONDS: u64 = 5;
@@ -39,20 +42,6 @@ struct AgentConfig {
     client_cert_pem: String,
     client_key_pem: String,
     pub duration_seconds: u64,
-}
-
-struct TlsClientTransport {
-    stream: TlsStream<tokio::net::TcpStream>,
-}
-
-impl comms::Transport for TlsClientTransport {
-    async fn send(&mut self, data: &[u8]) -> std::io::Result<()> {
-        self.stream.write_all(data).await
-    }
-    async fn receive(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        use tokio::io::AsyncReadExt;
-        self.stream.read(buf).await
-    }
 }
 
 fn find_config() -> Result<AgentConfig> {
@@ -125,7 +114,6 @@ async fn main() -> Result<()> {
     loop {
         match TcpStream::connect(&remote_addr).await {
             Ok(stream) => {
-                // We use the same CommonName as generated in Monitor's PKI
                 let domain = match ServerName::try_from("loonaro-monitor") {
                     Ok(d) => d,
                     Err(_) => {
@@ -136,21 +124,67 @@ async fn main() -> Result<()> {
                 match connector.connect(domain, stream).await {
                     Ok(tls_stream) => {
                         println!("Connected securely!");
-                        let mut transport = TlsClientTransport { stream: tls_stream };
+                        let connection = AgentConnection::new(tls_stream);
+                        let (mut writer, mut reader) = connection.split();
 
-                        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(8192);
+                        let (tx, mut rx) = mpsc::channel::<AgentMessage>(8192);
 
+                        // sender task
                         let transport_handle = tokio::spawn(async move {
-                            while let Some(buf) = rx.recv().await {
-                                if let Err(e) = transport.send(&buf).await {
+                            while let Some(msg) = rx.recv().await {
+                                if let Err(e) = writer.send(msg).await {
                                     eprintln!("comms send error: {e}");
                                     break;
                                 }
                             }
                         });
 
-                        let dump_tx = tx.clone();
+                        let screenshot_tx = tx.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = screenshots::run(screenshot_tx).await {
+                                eprintln!("Screenshot task died: {}", e);
+                            }
+                        });
 
+                        // receiver task
+                        let stop_tx = tx.clone();
+                        tokio::spawn(async move {
+                            while let Some(result) = reader.recv().await {
+                                match result {
+                                    Ok(msg) => match msg.payload {
+                                        Some(monitor_message::Payload::Command(cmd)) => {
+                                            println!("Received Command: {:?}", cmd.action);
+                                            // Handle StopTracing
+                                            if cmd.action == loonaro_models::sigma::command::Action::StopTracing as i32 {
+                                                 println!("Stopping requested. Flushing and exiting.");
+                                                 // Send CommandAck
+                                                 let ack = loonaro_models::sigma::CommandAck {
+                                                     action: cmd.action,
+                                                     success: true,
+                                                     session_id: "".to_string(),
+                                                 };
+                                                 let msg = AgentMessage {
+                                                     payload: Some(agent_message::Payload::CommandAck(ack)),
+                                                 };
+                                                 let _ = stop_tx.send(msg).await;
+                                                 
+                                                 tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                                                 std::process::exit(0);
+                                            }
+                                        },
+                                        _ => {}
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Codec Error or Connection Closed: {}", e);
+                                        break;
+                                    }
+                                }
+                            }
+                            eprintln!("Monitor closed connection.");
+                            std::process::exit(0);
+                        });
+
+                        let dump_tx = tx.clone();
                         let hook_handle = tokio::spawn(async move {
                             while let Some((pid, proc_name, event)) = hook_rx.recv().await {
                                 match event {
@@ -161,7 +195,7 @@ async fn main() -> Result<()> {
                                         ..
                                     } => {
                                         if protect == 0x40 || protect == 0x80 {
-                                            if let Err(e) = send_memory_dump(
+                                            let _ = send_memory_dump(
                                                 &dump_tx,
                                                 pid,
                                                 &proc_name,
@@ -169,19 +203,12 @@ async fn main() -> Result<()> {
                                                 region_size,
                                                 "RWX Alloc",
                                             )
-                                            .await
-                                            {
-                                                eprintln!("Failed to send dump: {}", e);
-                                            }
+                                            .await;
                                         }
                                     }
                                     pipe_server::HookEvent::MemoryProtect {
                                         new_protect, ..
-                                    } => {
-                                        if new_protect == 0x40 || new_protect == 0x80 {
-                                            // We don't track size perfectly here
-                                        }
-                                    }
+                                    } => if new_protect == 0x40 || new_protect == 0x80 {},
                                     _ => {}
                                 }
                             }
@@ -206,29 +233,33 @@ async fn main() -> Result<()> {
 }
 
 async fn send_memory_dump(
-    tx: &mpsc::Sender<Vec<u8>>,
+    tx: &mpsc::Sender<AgentMessage>,
     pid: u32,
     process_name: &str,
     base_address: u64,
     size: usize,
-    trigger: &str,
+    _trigger: &str,
 ) -> Result<()> {
     if let Ok(reader) = memory::ProcessReader::attach(pid) {
         if let Ok(data) = reader.read_memory(base_address, size) {
-            let header = MemoryDumpHeader {
-                pid,
-                process_name: process_name.to_string(),
-                region_base: base_address,
-                protection: "RWX".to_string(),
-                trigger: trigger.to_string(),
+            // Using ArtifactUpload for Memory Dump
+            let file_name = format!("{}_{}_{:#x}.dmp", pid, process_name, base_address);
+            
+            let total_size = data.len() as u64; 
+            let artifact = loonaro_models::sigma::ArtifactUpload {
+                session_id: "".to_string(),
+                file_path: file_name,
+                offset: 0,
+                r#type: "MEMORY_DUMP".to_string(),
+                total_size,
+                data,
+                is_last_chunk: true,
             };
 
-            let header_msg = Message::MemoryDump(header, data.len() as u32);
-            let mut buf = Vec::new();
-            minicbor::encode(&header_msg, &mut buf)?;
-            tx.send(buf).await?;
-
-            tx.send(data).await?;
+            let msg = AgentMessage {
+                payload: Some(agent_message::Payload::Artifact(artifact)),
+            };
+            tx.send(msg).await.context("Failed to send memory dump")?;
 
             println!("Sent memory dump for PID {} ({} bytes)", pid, size);
         }
@@ -236,7 +267,7 @@ async fn send_memory_dump(
     Ok(())
 }
 
-fn do_etw(tx: mpsc::Sender<Vec<u8>>, duration_seconds: u64) {
+fn do_etw(tx: mpsc::Sender<AgentMessage>, duration_seconds: u64) {
     let helper = CallstackHelper::new();
     let mut etw = one_collect::etw::EtwSession::new().with_callstack_help(&helper);
 
@@ -244,20 +275,18 @@ fn do_etw(tx: mpsc::Sender<Vec<u8>>, duration_seconds: u64) {
     let counter = Rc::new(RefCell::new(0));
 
     etw_events::process::register_process(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
-    etw_events::file::register_file_create(
-        &mut etw,
-        tx.clone(),
-        ancillary.clone(),
-        counter.clone(),
-    );
-    etw_events::registry::register_registry(
-        &mut etw,
-        tx.clone(),
-        ancillary.clone(),
-        counter.clone(),
-    );
+    etw_events::file::register_file(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::registry::register_registry(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
     etw_events::network::register_network(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
-    etw_events::dns::register_dns(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::dns::register_dns_client(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::thread::register_thread_events(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::image_load::register_image_load(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::pipe::register_pipe_events(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::wmi::register_wmi_events(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::powershell::register_powershell_events(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::handle::register_handle_events(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::ldap::register_ldap_events(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
+    etw_events::pnp::register_pnp_events(&mut etw, tx.clone(), ancillary.clone(), counter.clone());
 
     let duration = std::time::Duration::from_secs(duration_seconds);
 
@@ -266,46 +295,5 @@ fn do_etw(tx: mpsc::Sender<Vec<u8>>, duration_seconds: u64) {
     }
 
     let events_sent = counter.take();
-
-    if let Ok(end_buf) = minicbor::to_vec(Message::TracingFinished(events_sent)) {
-        let _ = tx.try_send(end_buf);
-    }
-
-    println!("Finishing ETW tracing. Events sent: {}", events_sent);
-}
-
-fn send_event_enqueue(
-    tx: &mpsc::Sender<Vec<u8>>,
-    data: &EventData<'_>,
-    ancillary: &ReadOnly<AncillaryData>,
-    event: EtwEvent,
-) -> anyhow::Result<()> {
-    let mut header = MaybeUninit::<EventHeader>::uninit();
-    ancillary.read(|e| {
-        header.write(EventHeader::from_ancillary(e, event));
-    });
-
-    // Construct the message as: CBOR(header, payload_size) || payload
-
-    let payload = data.event_data();
-    let payload_size = payload.len() as u32; // max 64KB according to ETW docs
-
-    // Try to enqueue without blocking; if failed to send, it's dropped.
-    let message = Message::EventHeader(unsafe { header.assume_init() }, payload_size);
-    let msg_buf = minicbor::to_vec(message)?;
-    match tx.try_send(msg_buf) {
-        Ok(_) => (),
-        Err(e) => {
-            eprintln!("Failed to enqueue event message: {}", e);
-        }
-    }
-
-    match tx.try_send(payload.to_vec()) {
-        Ok(_) => (),
-        Err(e) => {
-            eprintln!("Failed to enqueue event payload: {}", e);
-        }
-    }
-
-    Ok(())
+    println!("Finishing ETW tracing loop. Events sent: {}", events_sent);
 }

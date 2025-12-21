@@ -1,47 +1,36 @@
 use std::net::SocketAddr;
 use std::path::Path;
 
-use comms::Transport;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+// use tokio::io::{AsyncReadExt, AsyncWriteExt}; // Unused
 use tokio_rustls::server::TlsStream;
 
 use crate::artifacts::ArtifactCollector;
 use crate::processor::collect;
 use yara_scanner::{ArtifactScanner, YaraScanSummary};
 
-pub struct TlsServerTransport {
-    pub stream: TlsStream<tokio::net::TcpStream>,
-}
-
-impl Transport for TlsServerTransport {
-    async fn send(&mut self, data: &[u8]) -> std::io::Result<()> {
-        self.stream.write_all(data).await
-    }
-
-    async fn receive(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.stream.read(buf).await
-    }
-}
-
 pub async fn handle_session(
-    transport: &mut TlsServerTransport,
+    stream: TlsStream<tokio::net::TcpStream>,
     remote_addr: SocketAddr,
     session_id: &str,
     output_dir: &str,
     moose_url: &str,
     moose_key: &str,
+    duration: std::time::Duration,
 ) {
-    let mut collected_events = Vec::with_capacity(1024);
+    let mut collected_events: Vec<loonaro_models::sigma::MalwareEvent> = Vec::with_capacity(1024);
     let output_path = Path::new(output_dir);
     let mut artifact_collector = ArtifactCollector::new(session_id, output_path);
 
+    let mut connection = comms::Connection::new(stream);
+
     if let Err(e) = collect(
-        transport,
+        &mut connection,
         &mut collected_events,
         moose_url,
         moose_key,
         session_id,
         &mut artifact_collector,
+        duration,
     )
     .await
     {

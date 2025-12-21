@@ -18,7 +18,7 @@ use crate::fakenet_ng::FakeNetSession;
 use crate::pki::generate_pki;
 use crate::providers::windows::WindowsSandboxProvider;
 use crate::providers::{AnalysisProvider, ProvisionConfig};
-use crate::session::{TlsServerTransport, handle_session};
+use crate::session::handle_session;
 
 #[derive(Error, Debug)]
 pub enum MonitorError {
@@ -206,18 +206,19 @@ async fn accept_connections(
         let output_dir = config.output_dir.clone();
         let moose_url = config.moose_url.clone();
         let moose_key = config.moose_key.clone();
+        let duration = std::time::Duration::from_secs(config.duration);
 
         tokio::spawn(async move {
             match acceptor.accept(socket).await {
                 Ok(stream) => {
-                    let mut transport = TlsServerTransport { stream };
                     handle_session(
-                        &mut transport,
+                        stream,
                         remote_addr,
                         &session_id,
                         &output_dir,
                         &moose_url,
                         &moose_key,
+                        duration,
                     )
                     .await;
                 }

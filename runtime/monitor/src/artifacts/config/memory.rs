@@ -60,25 +60,4 @@ impl Default for MemoryCollectionConfig {
     }
 }
 
-impl MemoryCollectionConfig {
-    pub fn should_dump_process(&self, process_name: &str) -> bool {
-        if !self.enabled {
-            return false;
-        }
-        let name_lower = process_name.to_lowercase();
-        if self
-            .never_dump_processes
-            .iter()
-            .any(|p| p.to_lowercase() == name_lower)
-        {
-            return false;
-        }
-        if !self.always_dump_processes.is_empty() {
-            return self
-                .always_dump_processes
-                .iter()
-                .any(|p| p.to_lowercase() == name_lower);
-        }
-        true
-    }
-}
+impl MemoryCollectionConfig {}
