@@ -46,3 +46,4 @@ box_config/
 *.vhdx
 output/
 staging/
+framework-docs-v2/
