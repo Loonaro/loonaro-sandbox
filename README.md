@@ -10,22 +10,16 @@ We use a "Control Plane / Data Plane" split to ensure the API remains responsive
 
 ```mermaid
 graph TD
-    %% --- Styles ---
-    classDef plane fill:#f8f9fa,stroke:#bdc3c7,stroke-width:1px,color:#2c3e50;
-    classDef component fill:#ffffff,stroke:#34495e,stroke-width:2px,rx:5,ry:5;
-    classDef storage fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,rx:5,ry:5;
-    classDef db fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,rx:10,ry:10;
-
     %% --- Actors ---
     Analyst["Analyst / API"]
 
     %% --- Control Plane ---
     subgraph Control_Plane ["Control Plane"]
         direction TB
-        GW["Gateway API (Node.js)"]:::component
-        DB[("Postgres")]:::db
-        S3[("MinIO / S3")]:::storage
-        Queue[["Redpanda"]]:::storage
+        GW["Gateway API (Node.js)"]
+        DB[("Postgres")]
+        S3[("MinIO / S3")]
+        Queue[["Redpanda"]]
         
         GW -->|"Auth"| DB
         GW -->|"Sign URLs"| S3
@@ -38,18 +32,18 @@ graph TD
     %% --- Execution Plane ---
     subgraph Execution_Plane ["Execution Plane"]
         direction TB
-        Worker["Rust Worker"]:::component
+        Worker["Rust Worker"]
         
         subgraph Host_Hypervisor ["Host Node"]
             direction TB
-            Monitor["Rust Monitor"]:::component
-            FakeNet["FakeNetNG"]:::component
+            Monitor["Rust Monitor"]
+            FakeNet["FakeNetNG"]
             
             subgraph Sandbox ["Guest VM"]
                 direction TB
-                Agent["Rust Agent"]:::component
-                Malware["Malware"]:::component
-                Ghost["Ghost User"]:::component
+                Agent["Rust Agent"]
+                Malware["Malware"]
+                Ghost["Ghost User"]
                 
                 Malware -.->|"Hooks"| Agent
                 Ghost -.->|"Input"| Malware
@@ -69,9 +63,9 @@ graph TD
     %% --- Data & Artifacts ---
     subgraph Data_Plane ["Data Plane"]
         direction TB
-        Moose["Moose Ingest"]:::component
-        CH[("ClickHouse")]:::db
-        Pipelines["Analysis Pipelines"]:::component
+        Moose["Moose Ingest"]
+        CH[("ClickHouse")]
+        Pipelines["Analysis Pipelines"]
         
         Monitor -- "8. Telemetry" --> Moose
         Moose -- "Insert" --> CH
@@ -86,9 +80,6 @@ graph TD
     GW -- "9. Query" --> Moose
     Moose --> GW
     GW -->|"10. View Report"| Analyst
-
-    %% Internal Styling links
-    class Control_Plane,Execution_Plane,Data_Plane plane;
 ```
 
 ### How a job runs
